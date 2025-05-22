@@ -13,6 +13,9 @@ import PathFinding
 import Statics
 import Timer
 import os
+import clr  # Added for System.Speech
+clr.AddReference('System.Speech')  # Added for TTS
+from System.Speech.Synthesis import SpeechSynthesizer  # Added for TTS
 
 # Custom exception for beetle full condition
 class BeetleFullException(Exception):
@@ -27,7 +30,7 @@ CONFIG = {
     "move_timeout": 10000,  # Pathfinding timeout (ms)
     "logs_to_boards": True,  # Convert logs to boards
     "tree_cooldown": 1200000,  # 20 minutes for tree depletion
-    "lumberjacking_safety_alert": False,  # Toggle safety checks
+    "lumberjacking_safety_alert": False,  # Toggle safety checks (was 'alert')
     "drag_delay": 800,  # Delay for item movement
     "use_mount": False,  # Toggle mount usage
     "use_pet_storage": True,  # Toggle beetle storage
@@ -93,10 +96,16 @@ def SendMessage(message, color=CONFIG["colors"]["cyan"]):
 
 def say(message):
     try:
-        Misc.Say(message)
-        SendMessage(f"Speech alert: {message}", CONFIG["colors"]["red"])
+        spk = SpeechSynthesizer()
+        spk.Speak(message)
+        SendMessage(f"Speech alert: {message} (via System.Speech)", CONFIG["colors"]["red"])
+        with open("sparkins_log.txt", "a") as f:
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Speech attempt: {message} (Success via System.Speech)\n")
     except Exception as e:
-        SendMessage(f"say error: {str(e)}", CONFIG["colors"]["red"])
+        SendMessage(f"System.Speech TTS failed: {str(e)}", CONFIG["colors"]["red"])
+        Player.ChatSay(CONFIG["colors"]["red"], f"[Alert] {message}")  # Fallback to in-game chat
+        with open("sparkins_log.txt", "a") as f:
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Speech attempt: {message} (Failed: System.Speech TTS: {str(e)})\n")
 
 def Pause(milliseconds):
     Misc.Pause(milliseconds)
@@ -349,6 +358,22 @@ def GatherLumberjacking():
     trees = []
     block_count = 0
 
+    # Define filters for safety_net
+    toon_filter = Mobiles.Filter()
+    toon_filter.Enabled = True
+    toon_filter.RangeMin = -1
+    toon_filter.RangeMax = -1
+    toon_filter.IsHuman = True
+    toon_filter.Friend = False
+    toon_filter.Notorieties = List[Byte](bytes([1, 2, 3, 4, 5, 6, 7]))
+    
+    invul_filter = Mobiles.Filter()
+    invul_filter.Enabled = True
+    invul_filter.RangeMin = -1
+    invul_filter.RangeMax = -1
+    invul_filter.Friend = False
+    invul_filter.Notorieties = List[Byte](bytes([7]))
+
     def equip_axe():
         try:
             left_hand = Player.GetItemOnLayer('LeftHand')
@@ -401,7 +426,8 @@ def GatherLumberjacking():
                 number_in_beetle = get_number_in_beetle(resource_id)
                 if number_in_beetle + item.Amount >= CONFIG["max_weight"]:
                     SendMessage("Beetle full!", CONFIG["colors"]["red"])
-                    say("The Packy is Full Go Home")
+                    Player.HeadMessage(33, 'BEETLE FULL STOPPING')  # Added per provided script
+                    say("Your beetle is full, stop and unload")  # Updated message
                     ShowGatheringMenu()
                     raise BeetleFullException("Beetle weight limit reached")
                 Items.Move(item.Serial, beetle_mobile.Serial, 0)
@@ -415,7 +441,8 @@ def GatherLumberjacking():
             number_in_beetle = get_number_in_beetle(resource_id)
             if number_in_beetle + item.Amount >= CONFIG["max_weight"]:
                 SendMessage("Beetle full!", CONFIG["colors"]["red"])
-                say("The Packy is Full Go Home")
+                Player.HeadMessage(33, 'BEETLE FULL STOPPING')  # Added per provided script
+                say("Your beetle is full, stop and unload")  # Updated message
                 ShowGatheringMenu()
                 raise BeetleFullException("Beetle weight limit reached")
             Items.Move(item.Serial, beetle_mobile.Serial, 0)
@@ -531,23 +558,22 @@ def GatherLumberjacking():
     def safety_net():
         if not CONFIG["lumberjacking_safety_alert"]:
             return
-        toon_filter = Mobiles.Filter()
-        toon_filter.Enabled = True
-        toon_filter.IsHuman = True
-        toon_filter.Friend = False
-        toon_filter.Notorieties = List[Byte](bytes([1, 2, 3, 4, 5, 6, 7]))
-        invul_filter = Mobiles.Filter()
-        invul_filter.Enabled = True
-        invul_filter.Friend = False
-        invul_filter.Notorieties = List[Byte](bytes([7]))
         toons = Mobiles.ApplyFilter(toon_filter)
         invuls = Mobiles.ApplyFilter(invul_filter)
         if toons:
+            Misc.FocusUOWindow()
+            say("Hey, someone is here. You should tab over and take a look")
             toon = Mobiles.Select(toons, 'Nearest')
-            SendMessage(f"Toon near: {toon.Name}", CONFIG["colors"]["red"])
-        if invuls:
+            if toon:
+                SendMessage(f"Toon Near: {toon.Name}", CONFIG["colors"]["red"])
+        elif invuls:
+            Misc.FocusUOWindow()
+            say("Hey, something invulnerable here. You should tab over and take a look")
             invul = Mobiles.Select(invuls, 'Nearest')
-            SendMessage(f"ALERT: Invulnerable mobile: {invul.Name}", CONFIG["colors"]["red"])
+            if invul:
+                SendMessage(f"Uh Oh: Invul! Who the fuck is {invul.Name}", CONFIG["colors"]["red"])
+        else:
+            Misc.NoOperation()
 
     if not equip_axe():
         return
@@ -588,7 +614,7 @@ def ShowMainMenu():
             Gumps.AddButton(gd, x, y, 4014, 4016, i, 1, 0)  # Ornate button
             Gumps.AddLabel(gd, x + 50, y + 2, color, cat)  # Text at x + 50
             Gumps.AddTooltip(gd, 1011000 + i, tooltip)
-        Gumps.AddLabel(gd, 20, 180, CONFIG["colors"]["green"], "v1.0 - Sparkin's Adventure Tome")
+        Gumps.AddLabel(gd, 20, 180, CONFIG["colors"]["green"], "v1.0 - UOAlive")
         Gumps.SendGump(gump_id, Player.Serial, 150, 150, gd.gumpDefinition, gd.gumpStrings)
         if Gumps.WaitForGump(gump_id, 5000):
             gump_data = Gumps.GetGumpData(gump_id)
@@ -650,7 +676,7 @@ def ShowGatheringMenu():
             Gumps.AddButton(gd, x, y, 4014, 4016, i, 1, 0)  # Ornate button
             Gumps.AddLabel(gd, x + 30, y + 2, color, opt)  # Label right of button
             Gumps.AddTooltip(gd, 1011000 + i, tooltip)
-        Gumps.AddLabel(gd, 100, 190, CONFIG["colors"]["green"], "v1.0 -Sparkin's Adventure Tome")  # Version label
+        Gumps.AddLabel(gd, 100, 190, CONFIG["colors"]["green"], "v1.0 - UOAlive")  # Version label
         Gumps.SendGump(gump_id, Player.Serial, 150, 150, gd.gumpDefinition, gd.gumpStrings)
         if Gumps.WaitForGump(gump_id, 5000):
             gump_data = Gumps.GetGumpData(gump_id)
