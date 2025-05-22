@@ -1,8 +1,7 @@
 from System import Int32, Byte
 from System.Collections.Generic import List
 from math import sqrt
-
-# Razor Enhanced APIs
+from datetime import datetime
 import Items
 import Mobiles
 import Target
@@ -13,13 +12,18 @@ import Player
 import PathFinding
 import Statics
 import Timer
+import os
+
+# Custom exception for beetle full condition
+class BeetleFullException(Exception):
+    pass
 
 # Configuration
 CONFIG = {
     "blue_beetle_serial": 0x043D5FC2,  # Update with your blue beetle's serial
     "fire_beetle_serial": 0x0007950C,  # Update with your fire beetle's serial
-    "max_weight": 1600,  # Beetle weight limit (stones)
-    "scan_radius": 4,  # Tile scan radius
+    "max_weight": 1500,  # Beetle weight limit (stones)
+    "scan_radius": 8,  # Tile scan radius
     "move_timeout": 10000,  # Pathfinding timeout (ms)
     "logs_to_boards": True,  # Convert logs to boards
     "tree_cooldown": 1200000,  # 20 minutes for tree depletion
@@ -28,9 +32,8 @@ CONFIG = {
     "use_mount": False,  # Toggle mount usage
     "use_pet_storage": True,  # Toggle beetle storage
     "tool_ids": {
-        "pickaxe": [0x0E85, 0x0E86, 0x0F39],  # Standard pickaxes
-        "axe": [0x0F49, 0x13FB, 0x0F47, 0x1443, 0x0F45, 0x0F4B, 0x0F43],
-        "fishing_pole": [0x0DC0]
+        "pickaxe": [0x0E85, 0x0E86, 0x0F39],
+        "axe": [0x0F49, 0x13FB, 0x0F47, 0x1443, 0x0F45, 0x0F4B, 0x0F43]
     },
     "resource_ids": {
         "ore": [0x19B7, 0x19B8, 0x19B9, 0x19BA],
@@ -38,23 +41,22 @@ CONFIG = {
         "sand": [0x11EA],
         "logs": [0x1BDD, 0x1BDE],
         "boards": [0x1BD7, 0x1BD8],
-        "fish": [0x09CC, 0x09CD],
         "other_wood": [0x318F, 0x3199, 0x2F5F, 0x3190, 0x3191]
     },
     "mineable_tiles": [
-        0x053B, 0x053C, 0x053D, 0x053E, 0x053F,  # Cave floors
-        0x0220, 0x0221, 0x0222, 0x0223, 0x0224   # Mountainsides
+        0x053B, 0x053C, 0x053D, 0x053E, 0x053F,
+        0x0220, 0x0221, 0x0222, 0x0223, 0x0224
     ],
     "tree_tiles": [
-        0x0C95, 0x0C96, 0x0C99, 0x0C9B, 0x0C9C, 0x0C9D, 0x0C8A, 0x0CA6,
-        0x0CA8, 0x0CAA, 0x0CAB, 0x0CC3, 0x0CC4, 0x0CC8, 0x0CC9, 0x0CCA,
-        0x0CCB, 0x0CCC, 0x0CCD, 0x0CD0, 0x0CD3, 0x0CD6, 0x0CD8, 0x0CDA,
-        0x0CDD, 0x0CE0, 0x0CE3, 0x0CE6, 0x0CF8, 0x0CFB, 0x0CFE, 0x0D01,
-        0x0D25, 0x0D27, 0x0D35, 0x0D37, 0x0D38, 0x0D42, 0x0D43, 0x0D59,
-        0x0D70, 0x0D85, 0x0D94, 0x0D96, 0x0D98, 0x0D9A, 0x0D9C, 0x0D9E,
+        0x0C95, 0x0C96, 0x0C8A, 0x0CA8, 0x0CAA, 0x0CAB,
+        0x0CC3, 0x0CC8, 0x0CC9, 0x0CCA, 0x0CCB, 0x0CCC,
+        0x0CCD, 0x0CD0, 0x0CD3, 0x0CD6, 0x0CD8, 0x0CDA,
+        0x0CDD, 0x0CE0, 0x0CE3, 0x0CE6, 0x0CF8, 0x0CFB,
+        0x0CFE, 0x0D01, 0x0D25, 0x0D27, 0x0D35, 0x0D37,
+        0x0D38, 0x0D42, 0x0D43, 0x0D59, 0x0D70, 0x0D85,
+        0x0D94, 0x0D96, 0x0D98, 0x0D9A, 0x0D9C, 0x0D9E,
         0x0DA0, 0x0DA2, 0x0DA4, 0x0DA8
     ],
-    "water_tiles": list(range(0x00A8, 0x00AC)),
     "lockpick_id": 0x14FB,
     "bandage_id": 0x0E21,
     "lockbox_ids": [0x0E7C, 0x0E7D, 0x09AB],
@@ -84,10 +86,17 @@ def SendMessage(message, color=CONFIG["colors"]["cyan"]):
         Player.HeadMessage(color, message)
         Misc.SendMessage(message, color)
         with open("sparkins_log.txt", "a") as f:
-            f.write(f"{message}\n")
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
     except Exception as e:
         with open("sparkins_log.txt", "a") as f:
-            f.write(f"SendMessage error: {str(e)}\n")
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] SendMessage error: {str(e)}\n")
+
+def say(message):
+    try:
+        Misc.Say(message)
+        SendMessage(f"Speech alert: {message}", CONFIG["colors"]["red"])
+    except Exception as e:
+        SendMessage(f"say error: {str(e)}", CONFIG["colors"]["red"])
 
 def Pause(milliseconds):
     Misc.Pause(milliseconds)
@@ -127,7 +136,7 @@ def MoveToSpot(x, y, z, timeout=CONFIG["move_timeout"]):
             except Exception as e:
                 SendMessage(f"MoveToSpot Player.Position check error: {str(e)}", CONFIG["colors"]["red"])
                 return False
-    SendMessage(f"Failed to move to ({x}, {y}, {z}) or any adjacent spot!", CONFIG["colors"]["red"])
+    SendMessage(f"Failed to move to ({x}, {y}, {z})!", CONFIG["colors"]["red"])
     return False
 
 def TransferResources(resource_ids, destination_serial, min_count=10):
@@ -164,8 +173,6 @@ def TransferResources(resource_ids, destination_serial, min_count=10):
             except Exception as e:
                 SendMessage(f"TransferResources Player.Weight error: {str(e)}", CONFIG["colors"]["red"])
                 return False
-            SendMessage("Beetle is overweight!", CONFIG["colors"]["red"])
-            return False
     return True
 
 def SmeltOres():
@@ -189,7 +196,7 @@ def SmeltOres():
                 Target.TargetExecute(fire_beetle)
                 Pause(2000)
                 SendMessage(f"Smelted {ore.Amount} ore")
-        TransferResources([0x1BF2], CONFIG["blue_beetle_serial"], 5)  # Ingots
+        TransferResources([0x1BF2], CONFIG["fire_beetle_serial"], 5)  # Ingots
         return True
     except Exception as e:
         SendMessage(f"SmeltOres error: {str(e)}", CONFIG["colors"]["red"])
@@ -197,30 +204,18 @@ def SmeltOres():
 
 def PromptTarget(message="Select a target..."):
     SendMessage(message)
-    Target.PromptTarget()
-    Pause(10000)
-    target = Target.GetLast()
-    if not target:
+    target_id = Target.PromptTarget()
+    if target_id == -1:
         SendMessage("No target selected!", CONFIG["colors"]["red"])
         return None
     try:
-        if isinstance(target, int):
-            SendMessage(f"Target is integer serial: {hex(target)}")
-            # Try to resolve as Mobile or Item
-            mobile = Mobiles.FindBySerial(target)
-            if mobile:
-                SendMessage(f"Resolved as mobile: Serial {hex(mobile.Serial)}, Position {mobile.Position.X},{mobile.Position.Y},{mobile.Position.Z}")
-                return mobile
-            item = Items.FindBySerial(target)
-            if item:
-                SendMessage(f"Resolved as item: Serial {hex(item.Serial)}, Position {item.Position.X},{item.Position.Y},{item.Position.Z}")
-                return item
-            SendMessage(f"Could not resolve integer serial {hex(target)}, treating as tile")
-            # Assume tile targeting, prompt for coordinates
-            return {"Serial": target, "Position": None}
-        else:
-            SendMessage(f"Target selected: Serial {hex(target.Serial)}, Position {target.Position.X},{target.Position.Y},{target.Position.Z}")
-            return target
+        mobile = Mobiles.FindBySerial(target_id)
+        if mobile:
+            return mobile
+        item = Items.FindBySerial(target_id)
+        if item:
+            return item
+        return {"Serial": target_id, "Position": None}
     except Exception as e:
         SendMessage(f"PromptTarget error: {str(e)}", CONFIG["colors"]["red"])
         return None
@@ -238,11 +233,14 @@ def SetMiningContext(tool):
     try:
         gd = Gumps.CreateGump(movable=True, closable=False)
         Gumps.AddPage(gd, 0)
-        Gumps.AddBackground(gd, 0, 0, 300, 120, 9260)
-        Gumps.AddLabel(gd, 30, 20, 1153, "Set Pickaxe Context")
-        Gumps.AddLabel(gd, 50, 50, CONFIG["colors"]["cyan"], "Set to 'ore and gems' or 'ore and stone'?")
-        Gumps.AddButton(gd, 100, 80, 4011, 4012, 1, 1, 0)
-        Gumps.AddLabel(gd, 130, 80, 1152, "Done")
+        Gumps.AddBackground(gd, 0, 0, 280, 160, 9250)  # Parchment
+        Gumps.AddImage(gd, 0, 0, 5175)  # Thin border
+        Gumps.AddLabel(gd, 60, 20, 1160, "Set Pickaxe Context")  # Gold title
+        Gumps.AddLabel(gd, 20, 50, CONFIG["colors"]["cyan"], "Set to 'ore and gems' or")
+        Gumps.AddLabel(gd, 20, 70, CONFIG["colors"]["cyan"], "'ore and stone' for GM")
+        Gumps.AddButton(gd, 100, 100, 4011, 4012, 1, 1, 0)
+        Gumps.AddLabel(gd, 135, 102, 1152, "Done")
+        Gumps.AddTooltip(gd, 1011001, "Confirm context set")
         Gumps.SendGump(gump_id, Player.Serial, 150, 150, gd.gumpDefinition, gd.gumpStrings)
         Gumps.WaitForGump(gump_id, 30000)
         Gumps.CloseGump(gump_id)
@@ -257,8 +255,7 @@ def CheckLOS(x, y, z):
         route.Y = y
         route.MaxRetry = 1
         route.StopIfStuck = True
-        result = PathFinding.CanSee(route)
-        return result
+        return PathFinding.CanSee(route)
     except:
         return False
 
@@ -294,143 +291,56 @@ def DebugTileScan():
             except Exception as e:
                 SendMessage(f"Error scanning tile at ({x}, {y}): {str(e)}", CONFIG["colors"]["red"])
     with open("sparkins_log.txt", "a") as f:
-        f.write(f"Unique UOAlive ground tile IDs: {[hex(tid) for tid in sorted(tile_ids)]}\n")
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Unique UOAlive ground tile IDs: {[hex(tid) for tid in sorted(tile_ids)]}\n")
     SendMessage(f"Found {len(tile_ids)} unique ground tile IDs. Check sparkins_log.txt.")
 
 # Resource Gathering Functions
 def GatherMining():
     SendMessage("Starting UOAlive Mining...")
     try:
-        SendMessage(f"Current map: {Player.Map}")
         tool = CheckItemExists(CONFIG["tool_ids"]["pickaxe"], Player.Backpack, "pickaxe")
         if not tool:
-            SendMessage("No pickaxe found, exiting mining.", CONFIG["colors"]["red"])
             return
-        SendMessage(f"Pickaxe: Serial {hex(tool.Serial)}, ID {hex(tool.ItemID)}, Uses {tool.UsesRemaining if hasattr(tool, 'UsesRemaining') else 'Unknown'}")
         SetMiningContext(tool)
-
-        # Initial manual mining test
-        SendMessage("Please manually select a mineable tile to test mining...")
-        target = PromptTarget("Select a mineable tile (e.g., cave floor or mountainside)...")
-        if not target:
-            SendMessage("No valid target selected, exiting mining.", CONFIG["colors"]["red"])
+        target = PromptTarget("Select a mineable tile...")
+        if not target or not hasattr(target, "Position"):
+            SendMessage("Invalid target!", CONFIG["colors"]["red"])
             return
-        try:
-            x = target.Position.X
-            y = target.Position.Y
-            z = target.Position.Z
-            SendMessage(f"Testing manual mining at ({x}, {y}, {z})")
-        except AttributeError:
-            SendMessage("Target has no Position attribute, assuming tile serial", CONFIG["colors"]["red"])
-            # Prompt for manual coordinates
-            SendMessage("Please manually select the tile again to confirm position...")
-            target = PromptTarget("Re-select the mineable tile...")
-            if not target:
-                SendMessage("No valid target selected, exiting mining.", CONFIG["colors"]["red"])
-                return
-            try:
-                x = target.Position.X
-                y = target.Position.Y
-                z = target.Position.Z
-                SendMessage(f"Retrying manual mining at ({x}, {y}, {z})")
-            except AttributeError:
-                SendMessage("Target still invalid, exiting mining.", CONFIG["colors"]["red"])
-                return
-
-        # Manual mining test
-        Journal.Clear()
-        Misc.Resync()
-        Items.UseItem(tool)
-        if Target.WaitForTarget(4000, False):
-            Target.TargetExecute(x, y, z)
-            Pause(4000)
-            journal_messages = Journal.GetTextByType('System') + Journal.GetTextByType('Regular')
-            for msg in journal_messages:
-                SendMessage(f"Manual Journal: {msg}", CONFIG["colors"]["red"])
-            if any(msg in m for m in journal_messages for msg in [
-                "You dig some", "You loosen some rocks", "You put", "You mine some"
-            ]):
-                SendMessage("Manual mining successful! Using this tile for auto-mining...")
-            else:
-                SendMessage("Manual mining failed. Check journal messages, context menu, and skill level.", CONFIG["colors"]["red"])
-                return
-        else:
-            SendMessage("Manual target not prompted, check pickaxe and client focus.", CONFIG["colors"]["red"])
-            return
-
-        # Auto-mining loop
-        SendMessage(f"Auto-mining at manually selected tile ({x}, {y}, {z})")
+        x, y, z = target.Position.X, target.Position.Y, target.Position.Z
         retries = 5
         while retries > 0:
             if not MoveToSpot(x, y, z):
-                SendMessage(f"Failed to move to ({x}, {y}, {z}), exiting mining.", CONFIG["colors"]["red"])
+                SendMessage(f"Failed to move to ({x}, {y}, {z})!", CONFIG["colors"]["red"])
                 break
             tool = CheckItemExists(CONFIG["tool_ids"]["pickaxe"], Player.Backpack, "pickaxe")
             if not tool:
-                SendMessage("No valid pickaxe found, exiting mining.", CONFIG["colors"]["red"])
                 break
             Journal.Clear()
-            SendMessage(f"Using pickaxe {hex(tool.Serial)} (Retry {6 - retries}/5)")
-            Misc.Resync()
             Items.UseItem(tool)
             if Target.WaitForTarget(4000, False):
-                try:
-                    Target.TargetExecuteRelative(Player.Serial, 1)
-                except Exception as e:
-                    SendMessage(f"TargetExecuteRelative Player.Serial error: {str(e)}", CONFIG["colors"]["red"])
-                    retries -= 1
-                    continue
+                Target.TargetExecute(x, y, z)
                 Pause(4000)
                 journal_messages = Journal.GetTextByType('System') + Journal.GetTextByType('Regular')
-                for msg in journal_messages:
-                    SendMessage(f"Journal: {msg}", CONFIG["colors"]["red"])
-                if any(msg in m for m in journal_messages for msg in [
-                    "You dig some", "You loosen some rocks", "You put", "You mine some"
-                ]):
-                    SendMessage("Mining successful, processing resources...")
+                if any(msg in m for m in journal_messages for msg in ["You dig some", "You loosen some rocks"]):
+                    SendMessage("Mining successful!")
                     SmeltOres()
                     TransferResources(CONFIG["resource_ids"]["ore"], CONFIG["blue_beetle_serial"], 5)
-                    TransferResources(CONFIG["resource_ids"]["granite"], CONFIG["blue_beetle_serial"], 5)
-                    TransferResources(CONFIG["resource_ids"]["sand"], CONFIG["blue_beetle_serial"], 5)
-                    retries = 5  # Reset retries on success
-                elif any(msg in m for m in journal_messages for msg in [
-                    "There is no metal here to mine", "no sand here", "no ore here", "cannot mine that",
-                    "can\'t mine there", "Target cannot be seen", "too far away", "must wait to perform",
-                    "You can\'t use this here"
-                ]):
-                    SendMessage(f"Invalid tile at ({x}, {y}, {z}), prompting new manual selection...", CONFIG["colors"]["red"])
+                    retries = 5
+                elif any(msg in m for m in journal_messages for msg in ["There is no metal here to mine"]):
+                    SendMessage("No ore here, select a new tile...", CONFIG["colors"]["red"])
                     target = PromptTarget("Select a new mineable tile...")
-                    if target:
-                        try:
-                            x = target.Position.X
-                            y = target.Position.Y
-                            z = target.Position.Z
-                            SendMessage(f"Switching to new tile ({x}, {y}, {z})")
-                            retries = 5
-                        except AttributeError:
-                            SendMessage("New target has no Position, exiting mining.", CONFIG["colors"]["red"])
-                            break
+                    if target and hasattr(target, "Position"):
+                        x, y, z = target.Position.X, target.Position.Y, target.Position.Z
+                        retries = 5
                     else:
-                        SendMessage("No new tile selected, exiting mining.", CONFIG["colors"]["red"])
                         break
                 else:
-                    SendMessage(f"No clear journal response, retrying...")
                     retries -= 1
             else:
-                SendMessage(f"Target not prompted for pickaxe {hex(tool.Serial)}, retrying...", CONFIG["colors"]["red"])
                 retries -= 1
-            try:
-                if Player.Weight > Player.MaxWeight - 50:
-                    SendMessage("Weight limit reached, transferring resources...")
-                    SmeltOres()
-                    TransferResources(CONFIG["resource_ids"]["ore"], CONFIG["blue_beetle_serial"], 5)
-                    TransferResources(CONFIG["resource_ids"]["granite"], CONFIG["blue_beetle_serial"], 5)
-                    TransferResources(CONFIG["resource_ids"]["sand"], CONFIG["blue_beetle_serial"], 5)
-            except Exception as e:
-                SendMessage(f"Weight check Player.Weight error: {str(e)}", CONFIG["colors"]["red"])
-                break
-            Journal.Clear()
-            Pause(100)
+            if Player.Weight > Player.MaxWeight - 50:
+                SmeltOres()
+                TransferResources(CONFIG["resource_ids"]["ore"], CONFIG["blue_beetle_serial"], 5)
     except Exception as e:
         SendMessage(f"GatherMining error: {str(e)}", CONFIG["colors"]["red"])
 
@@ -458,7 +368,7 @@ def GatherLumberjacking():
                 except Exception as e:
                     SendMessage(f"equip_axe Player.EquipItem error: {str(e)}", CONFIG["colors"]["red"])
                     return False
-        SendMessage("No axe found to equip! Stopping lumberjacking.", CONFIG["colors"]["red"])
+        SendMessage("No axe found to equip!", CONFIG["colors"]["red"])
         return False
 
     def get_number_in_beetle(resource_id):
@@ -474,30 +384,28 @@ def GatherLumberjacking():
     def move_to_beetle():
         if CONFIG["logs_to_boards"]:
             for item in Player.Backpack.Contains:
-                if item.ItemID == CONFIG["resource_ids"]["logs"][0]:
+                if item.ItemID in CONFIG["resource_ids"]["logs"]:
                     axe = Player.GetItemOnLayer('LeftHand')
                     if axe:
                         Items.UseItem(axe)
                         Target.WaitForTarget(1500, False)
                         Target.TargetExecute(item)
                         Pause(CONFIG["drag_delay"])
-
         beetle_mobile = Mobiles.FindBySerial(CONFIG["blue_beetle_serial"])
         if not beetle_mobile:
             SendMessage("Beetle not found!", CONFIG["colors"]["red"])
             return False
-
         resource_id = CONFIG["resource_ids"]["boards"][0] if CONFIG["logs_to_boards"] else CONFIG["resource_ids"]["logs"][0]
         for item in Player.Backpack.Contains:
             if item.ItemID == resource_id:
                 number_in_beetle = get_number_in_beetle(resource_id)
-                if number_in_beetle + item.Amount < CONFIG["max_weight"]:
-                    Items.Move(item.Serial, beetle_mobile.Serial, 0)
-                    Pause(CONFIG["drag_delay"])
-                else:
-                    SendMessage("Beetle full, stopping!", CONFIG["colors"]["red"])
-                    return False
-
+                if number_in_beetle + item.Amount >= CONFIG["max_weight"]:
+                    SendMessage("Beetle full!", CONFIG["colors"]["red"])
+                    say("The Packy is Full Go Home")
+                    ShowGatheringMenu()
+                    raise BeetleFullException("Beetle weight limit reached")
+                Items.Move(item.Serial, beetle_mobile.Serial, 0)
+                Pause(CONFIG["drag_delay"])
         ground_items = Items.Filter()
         ground_items.Movable = True
         ground_items.RangeMax = 2
@@ -505,13 +413,13 @@ def GatherLumberjacking():
         items = Items.ApplyFilter(ground_items)
         for item in items:
             number_in_beetle = get_number_in_beetle(resource_id)
-            if number_in_beetle + item.Amount < CONFIG["max_weight"]:
-                Items.Move(item.Serial, beetle_mobile.Serial, 0)
-                Pause(CONFIG["drag_delay"])
-            else:
-                SendMessage("Beetle full, stopping!", CONFIG["colors"]["red"])
-                return False
-
+            if number_in_beetle + item.Amount >= CONFIG["max_weight"]:
+                SendMessage("Beetle full!", CONFIG["colors"]["red"])
+                say("The Packy is Full Go Home")
+                ShowGatheringMenu()
+                raise BeetleFullException("Beetle weight limit reached")
+            Items.Move(item.Serial, beetle_mobile.Serial, 0)
+            Pause(CONFIG["drag_delay"])
         return True
 
     def scan_trees():
@@ -537,19 +445,18 @@ def GatherLumberjacking():
     def range_tree(tree):
         try:
             px, py = Player.Position.X, Player.Position.Y
+            tx, ty = tree.x, tree.y
+            return (tx >= px - 1 and tx <= px + 1) and (ty >= py - 1 and ty <= py + 1)
         except Exception as e:
             SendMessage(f"range_tree Player.Position error: {str(e)}", CONFIG["colors"]["red"])
             return False
-        tx, ty = tree.x, tree.y
-        return (tx >= px - 1 and tx <= px + 1) and (ty >= py - 1 and ty <= py + 1)
 
     def move_to_tree(tree):
         SendMessage(f"Moving to tree at ({tree.x}, {tree.y})")
-        Misc.Resync()
         offsets = [(0, 1), (1, 0), (-1, 0), (0, -1)]
         for dx, dy in offsets:
             if MoveToSpot(tree.x + dx, tree.y + dy, tree.z):
-                Misc.Pause(1000)
+                Pause(1000)
                 if range_tree(tree):
                     SendMessage(f"Reached tree at ({tree.x}, {tree.y})")
                     return True
@@ -561,13 +468,14 @@ def GatherLumberjacking():
         if not equip_axe():
             return False
         if Target.HasTarget():
-            SendMessage("Canceling existing target!", CONFIG["colors"]["red"])
             Target.Cancel()
             Pause(500)
         try:
             if Player.Weight >= Player.MaxWeight - 10:
                 if not move_to_beetle():
                     return False
+        except BeetleFullException:
+            raise
         except Exception as e:
             SendMessage(f"cut_tree Player.Weight error: {str(e)}", CONFIG["colors"]["red"])
             return False
@@ -575,7 +483,7 @@ def GatherLumberjacking():
         try:
             axe = Player.GetItemOnLayer('LeftHand')
             if not axe:
-                SendMessage("No axe equipped after equip attempt! Stopping.", CONFIG["colors"]["red"])
+                SendMessage("No axe equipped!", CONFIG["colors"]["red"])
                 return False
         except Exception as e:
             SendMessage(f"cut_tree Player.GetItemOnLayer error: {str(e)}", CONFIG["colors"]["red"])
@@ -586,14 +494,14 @@ def GatherLumberjacking():
         Timer.Create('chopTimer', 10000)
         while not (Journal.SearchByType('You hack at the tree for a while, but fail to produce any useable wood.', 'System') or
                    Journal.SearchByType('You chop some', 'System') or
-                   Journal.SearchByType('There\'s not enough wood here to harvest.', 'System') or
+                   Journal.SearchByType("There's not enough wood here to harvest.", 'System') or
                    not Timer.Check('chopTimer')):
             Pause(100)
-        if Journal.SearchByType('There\'s not enough wood here to harvest.', 'System'):
+        if Journal.SearchByType("There's not enough wood here to harvest.", 'System'):
             SendMessage("Tree depleted, marking cooldown.")
             Timer.Create(f"{tree.x},{tree.y}", CONFIG["tree_cooldown"])
             return True
-        elif Journal.Search('That is too far away'):
+        elif Journal.Search("That is too far away"):
             block_count += 1
             Journal.Clear()
             if block_count > 3:
@@ -602,15 +510,15 @@ def GatherLumberjacking():
                 Timer.Create(f"{tree.x},{tree.y}", CONFIG["tree_cooldown"])
                 return True
             return cut_tree(tree)
-        elif Journal.Search('bloodwood'):
+        elif Journal.Search("bloodwood"):
             SendMessage("Bloodwood harvested!", 1194)
             Timer.Create('chopTimer', 10000)
             return cut_tree(tree)
-        elif Journal.Search('heartwood'):
+        elif Journal.Search("heartwood"):
             SendMessage("Heartwood harvested!", 1193)
             Timer.Create('chopTimer', 10000)
             return cut_tree(tree)
-        elif Journal.Search('frostwood'):
+        elif Journal.Search("frostwood"):
             SendMessage("Frostwood harvested!", 1151)
             Timer.Create('chopTimer', 10000)
             return cut_tree(tree)
@@ -643,74 +551,22 @@ def GatherLumberjacking():
 
     if not equip_axe():
         return
-    while True:
-        scan_trees()
-        if not trees:
-            SendMessage("No trees found in range! Move closer to trees.", CONFIG["colors"]["red"])
-            break
-        while trees:
-            safety_net()
-            if move_to_tree(trees[0]):
-                if not cut_tree(trees[0]):
-                    break
-            trees.pop(0)
-        Pause(100)
-
-def GatherFishing():
-    SendMessage("Starting Fishing...")
     try:
-        tool = CheckItemExists(CONFIG["tool_ids"]["fishing_pole"], Player.Backpack, "fishing_pole")
-        if not tool:
-            SendMessage("No fishing pole found, exiting fishing.", CONFIG["colors"]["red"])
-            return
-        water_spots = []
-        try:
-            px = Player.Position.X
-            py = Player.Position.Y
-        except Exception as e:
-            SendMessage(f"GatherFishing Player.Position error: {str(e)}", CONFIG["colors"]["red"])
-            return
-        for x in range(px - CONFIG["scan_radius"], px + CONFIG["scan_radius"]):
-            for y in range(py - CONFIG["scan_radius"], py + CONFIG["scan_radius"]):
-                try:
-                    statics = Statics.GetStaticsTileInfo(x, y, Player.Map)
-                    for tile in statics:
-                        if tile.StaticID in CONFIG["water_tiles"]:
-                            z = Player.Position.Z
-                            water_spots.append((x, y, z))
-                            SendMessage(f"Found water tile {hex(tile.StaticID)} at ({x}, {y}, {z})")
-                except Exception as e:
-                    SendMessage(f"Error scanning tile at ({x}, {y}): {str(e)}", CONFIG["colors"]["red"])
-                    continue
-        if not water_spots:
-            SendMessage("No water tiles found in range!", CONFIG["colors"]["red"])
-            return
-        SendMessage(f"Found {len(water_spots)} water spots.")
-        while water_spots:
-            spot = water_spots[0]
-            if MoveToSpot(spot[0], spot[1], spot[2]):
-                Items.UseItem(tool)
-                Target.WaitForTarget(5000, False)
-                Target.TargetExecute(spot[0], spot[1], spot[2])
-                Pause(2000)
-                journal_messages = Journal.GetTextByType('System')
-                if journal_messages:
-                    SendMessage(f"Journal: {journal_messages[-1]}", CONFIG["colors"]["red"])
-                if Journal.Search("no fish"):
-                    SendMessage("No fish here, moving to next...")
-                    water_spots.pop(0)
-                TransferResources(CONFIG["resource_ids"]["fish"], CONFIG["blue_beetle_serial"])
-            try:
-                if Player.Weight > Player.MaxWeight - 50:
-                    SendMessage("Weight limit reached, transferring resources...")
-                    TransferResources(CONFIG["resource_ids"]["fish"], CONFIG["blue_beetle_serial"])
-            except Exception as e:
-                SendMessage(f"GatherFishing Player.Weight error: {str(e)}", CONFIG["colors"]["red"])
+        while True:
+            scan_trees()
+            if not trees:
+                SendMessage("No trees found in range! Move closer to trees.", CONFIG["colors"]["red"])
                 break
-            Journal.Clear()
-            Pause(1000)
-    except Exception as e:
-        SendMessage(f"GatherFishing error: {str(e)}", CONFIG["colors"]["red"])
+            while trees:
+                safety_net()
+                if move_to_tree(trees[0]):
+                    if not cut_tree(trees[0]):
+                        break
+                trees.pop(0)
+            Pause(100)
+    except BeetleFullException:
+        SendMessage("Lumberjacking stopped: Beetle full.", CONFIG["colors"]["red"])
+        raise
 
 # Gump Menu Functions
 def ShowMainMenu():
@@ -719,18 +575,20 @@ def ShowMainMenu():
     try:
         gd = Gumps.CreateGump(movable=True, closable=True)
         Gumps.AddPage(gd, 0)
-        Gumps.AddBackground(gd, 0, 0, 350, 150, 9200)
-        Gumps.AddLabel(gd, 50, 20, 1152, "Sparkin's Adventurer's Tome")
-        Gumps.AddImage(gd, 20, 20, 9000)
+        Gumps.AddBackground(gd, 0, 0, 320, 220, 9250)  # Parchment background
+        Gumps.AddImage(gd, 0, 0, 5120)  # Border
+        Gumps.AddLabel(gd, 60, 20, 1160, "Sparkin's Adventurer's Tome")  # Gold title
+        Gumps.AddImage(gd, 20, 20, 9000)  # Book icon
         categories = [
             ("Exit", "Close the tome", CONFIG["colors"]["red"]),
-            ("Resource Gathering", "Mine, chop, fish", CONFIG["colors"]["cyan"])
+            ("Resource Gathering", "Mine, chop", CONFIG["colors"]["cyan"])
         ]
         for i, (cat, tooltip, color) in enumerate(categories):
-            x, y = 50, 80 + i * 60
-            Gumps.AddButton(gd, x, y, 4005, 4007, i, 1, 0)
-            Gumps.AddLabel(gd, x + 30, y, color, cat)
+            x, y = 50, 70 + i * 40
+            Gumps.AddButton(gd, x, y, 4014, 4016, i, 1, 0)  # Ornate button
+            Gumps.AddLabel(gd, x + 50, y + 2, color, cat)  # Text at x + 50
             Gumps.AddTooltip(gd, 1011000 + i, tooltip)
+        Gumps.AddLabel(gd, 20, 180, CONFIG["colors"]["green"], "v1.0 - Sparkin's Adventure Tome")
         Gumps.SendGump(gump_id, Player.Serial, 150, 150, gd.gumpDefinition, gd.gumpStrings)
         if Gumps.WaitForGump(gump_id, 5000):
             gump_data = Gumps.GetGumpData(gump_id)
@@ -750,13 +608,16 @@ def ShowConfirmExitMenu():
     try:
         gd = Gumps.CreateGump(movable=True, closable=True)
         Gumps.AddPage(gd, 0)
-        Gumps.AddBackground(gd, 0, 0, 250, 120, 9260)
-        Gumps.AddLabel(gd, 30, 20, 1153, "Confirm Exit")
-        Gumps.AddLabel(gd, 50, 50, CONFIG["colors"]["red"], "Close Sparkin's Tome?")
-        Gumps.AddButton(gd, 50, 80, 4011, 4012, 1, 1, 0)
-        Gumps.AddLabel(gd, 80, 80, 1152, "Yes")
-        Gumps.AddButton(gd, 130, 80, 4008, 4009, 0, 1, 0)
-        Gumps.AddLabel(gd, 160, 80, 1152, "No")
+        Gumps.AddBackground(gd, 0, 0, 260, 140, 9270)  # Stone tablet
+        Gumps.AddImage(gd, 0, 0, 5175)  # Thin border
+        Gumps.AddLabel(gd, 70, 20, 1160, "Confirm Exit")  # Gold title
+        Gumps.AddLabel(gd, 30, 50, CONFIG["colors"]["red"], "Close Sparkin's Tome?")
+        Gumps.AddButton(gd, 60, 80, 4011, 4012, 1, 1, 0)
+        Gumps.AddLabel(gd, 95, 82, 1152, "Yes")
+        Gumps.AddTooltip(gd, 1011001, "Exit the script")
+        Gumps.AddButton(gd, 150, 80, 4008, 4009, 0, 1, 0)
+        Gumps.AddLabel(gd, 185, 82, 1152, "No")
+        Gumps.AddTooltip(gd, 1011000, "Return to menu")
         Gumps.SendGump(gump_id, Player.Serial, 150, 150, gd.gumpDefinition, gd.gumpStrings)
         if Gumps.WaitForGump(gump_id, 5000):
             gump_data = Gumps.GetGumpData(gump_id)
@@ -776,19 +637,20 @@ def ShowGatheringMenu():
     try:
         gd = Gumps.CreateGump(movable=True, closable=True)
         Gumps.AddPage(gd, 0)
-        Gumps.AddBackground(gd, 0, 0, 300, 230, 5120)
-        Gumps.AddLabel(gd, 50, 20, CONFIG["colors"]["cyan"], "Resource Gathering")
+        Gumps.AddBackground(gd, 0, 0, 300, 220, 0x0FEF)  # Open book background
+        Gumps.AddLabel(gd, 80, 20, 1160, "Resource Gathering")  # Centered title
         options = [
-            ("Back", "Return to main tome", 1152),
+            ("Back", "Return to main tome", CONFIG["colors"]["green"]),
             ("Mining", "Mine ore and smelt", CONFIG["colors"]["cyan"]),
             ("Lumberjacking", "Chop trees", 0x00B2),
-            ("Fishing", "Cast lines", 0x00B9),
             ("Debug Tiles", "Scan ground tile IDs", CONFIG["colors"]["red"])
         ]
         for i, (opt, tooltip, color) in enumerate(options):
-            Gumps.AddButton(gd, 50, 60 + i * 30, 4029, 4030, i, 1, 0)
-            Gumps.AddLabel(gd, 80, 60 + i * 30, color, opt)
+            x, y = 75, 60 + i * 30  # Centered button
+            Gumps.AddButton(gd, x, y, 4014, 4016, i, 1, 0)  # Ornate button
+            Gumps.AddLabel(gd, x + 30, y + 2, color, opt)  # Label right of button
             Gumps.AddTooltip(gd, 1011000 + i, tooltip)
+        Gumps.AddLabel(gd, 100, 190, CONFIG["colors"]["green"], "v1.0 -Sparkin's Adventure Tome")  # Version label
         Gumps.SendGump(gump_id, Player.Serial, 150, 150, gd.gumpDefinition, gd.gumpStrings)
         if Gumps.WaitForGump(gump_id, 5000):
             gump_data = Gumps.GetGumpData(gump_id)
@@ -811,11 +673,9 @@ def MainMenu():
     gump_active = False
     while True:
         if not gump_active:
-            SendMessage("Opening main menu...")
             gump_active = True
             try:
                 main_choice = ShowMainMenu()
-                SendMessage(f"Main menu choice: {main_choice}")
             except Exception as e:
                 SendMessage(f"ShowMainMenu error: {str(e)}", CONFIG["colors"]["red"])
                 gump_active = False
@@ -836,7 +696,6 @@ def MainMenu():
                     gump_active = True
                     try:
                         gather_choice = ShowGatheringMenu()
-                        SendMessage(f"Gathering menu choice: {gather_choice}")
                     except Exception as e:
                         SendMessage(f"ShowGatheringMenu error: {str(e)}", CONFIG["colors"]["red"])
                         gump_active = False
@@ -848,10 +707,12 @@ def MainMenu():
                     elif gather_choice == 1:
                         GatherMining()
                     elif gather_choice == 2:
-                        GatherLumberjacking()
+                        try:
+                            GatherLumberjacking()
+                        except BeetleFullException:
+                            SendMessage("Script stopped: Beetle full.", CONFIG["colors"]["red"])
+                            return
                     elif gather_choice == 3:
-                        GatherFishing()
-                    elif gather_choice == 4:
                         DebugTileScan()
                     Pause(100)
         Pause(100)
@@ -859,7 +720,7 @@ def MainMenu():
 # Entry Point
 if __name__ == "__main__":
     with open("sparkins_log.txt", "a") as f:
-        f.write("Script started\n")
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Script started\n")
     try:
         SendMessage(f"Player: {Player.Name}, Connected: {Player.IsConnected()}")
     except Exception as e:
